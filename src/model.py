@@ -5,28 +5,22 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
-    """
-    Loads base Qwen2.5 model, tokenizer, and returns LoRA configuration.
-    """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
     model_name = config["model"]["base_model_name"]
     lora_cfg = config["lora"]
 
-    # 1. Initialize Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name,
-        trust_remote_code=True
-    )
+    # Initialize Tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    # 2. Force single GPU mapping to prevent DataParallel device mismatch
+    # Lock single GPU mapping
     device_map = {"": 0} if torch.cuda.is_available() else "cpu"
 
-    # 3. Initialize Raw Base Model
+    # Load Foundation Model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if config["training"].get("fp16", True) else torch.float32,
@@ -34,7 +28,7 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
         trust_remote_code=True
     )
 
-    # 4. Configure LoRA Parameters
+    # Configure LoRA Adapters
     peft_config = LoraConfig(
         r=lora_cfg["r"],
         lora_alpha=lora_cfg["lora_alpha"],
@@ -48,4 +42,4 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
 
 if __name__ == "__main__":
     model, tokenizer, peft_cfg = setup_model_and_tokenizer()
-    print(f"[+] Base model loaded on device 0: {type(model).__name__}")
+    print(f"[+] Loaded base foundation model: {model.config._name_or_path}")
