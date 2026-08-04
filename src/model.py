@@ -23,8 +23,10 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    # 2. Initialize Raw Base Model
-    device_map = "cuda" if torch.cuda.is_available() else "cpu"
+    # 2. Force single GPU mapping to prevent DataParallel device mismatch
+    device_map = {"": 0} if torch.cuda.is_available() else "cpu"
+
+    # 3. Initialize Raw Base Model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if config["training"].get("fp16", True) else torch.float32,
@@ -32,7 +34,7 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
         trust_remote_code=True
     )
 
-    # 3. Configure LoRA Parameters (SFTTrainer handles wrapping)
+    # 4. Configure LoRA Parameters
     peft_config = LoraConfig(
         r=lora_cfg["r"],
         lora_alpha=lora_cfg["lora_alpha"],
@@ -46,4 +48,4 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
 
 if __name__ == "__main__":
     model, tokenizer, peft_cfg = setup_model_and_tokenizer()
-    print(f"[+] Base model loaded: {type(model).__name__}")
+    print(f"[+] Base model loaded on device 0: {type(model).__name__}")
