@@ -1,4 +1,5 @@
 torch
+torchao>=0.16.0
 transformers>=4.43.0
 datasets
 peft
