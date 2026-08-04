@@ -10,14 +10,14 @@ def run_training(config_path="configs/train_config.yaml"):
     """
     Executes supervised fine-tuning loop and saves adapter artifacts.
     """
-    # 1. Load Data & Prepared Model Stack
+    # 1. Load Data & Unwrapped Base Model Stack
     train_ds, eval_ds, config = load_and_prepare_dataset(config_path)
     model, tokenizer, peft_config = setup_model_and_tokenizer(config_path)
 
     train_cfg = config["training"]
     max_seq_len = config["model"]["max_seq_length"]
 
-    # 2. Configure SFT Parameters via SFTConfig
+    # 2. Configure SFT Arguments
     sft_config = SFTConfig(
         output_dir=train_cfg["output_dir"],
         per_device_train_batch_size=train_cfg["per_device_train_batch_size"],
@@ -27,14 +27,14 @@ def run_training(config_path="configs/train_config.yaml"):
         logging_steps=train_cfg["logging_steps"],
         fp16=train_cfg.get("fp16", torch.cuda.is_available()),
         optim=train_cfg.get("optim", "adamw_torch"),
-        max_length=max_seq_len,  # Correct parameter name in TRL SFTConfig
+        max_length=max_seq_len,
         packing=False,
         save_strategy="epoch",
         eval_strategy="epoch",
         report_to="none"
     )
 
-    # 3. Instantiate SFTTrainer
+    # 3. Instantiate SFTTrainer (Pass raw model + peft_config)
     trainer = SFTTrainer(
         model=model,
         args=sft_config,
@@ -51,7 +51,7 @@ def run_training(config_path="configs/train_config.yaml"):
     print(f"\n[+] Saving trained LoRA adapter to: {train_cfg['output_dir']}")
     trainer.model.save_pretrained(train_cfg["output_dir"])
     tokenizer.save_pretrained(train_cfg["output_dir"])
-    print("[+] Training complete successfully.")
+    print("[+] Training completed successfully.")
 
 if __name__ == "__main__":
     run_training()

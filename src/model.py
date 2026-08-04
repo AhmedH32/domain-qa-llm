@@ -1,12 +1,12 @@
 import torch
 import yaml
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
     """
-    Loads base Qwen2.5 model and tokenizer, then wraps model with LoRA config.
+    Loads base Qwen2.5 model, tokenizer, and returns LoRA configuration.
     """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -14,7 +14,7 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
     model_name = config["model"]["base_model_name"]
     lora_cfg = config["lora"]
 
-    # Initialize Tokenizer
+    # 1. Initialize Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
         trust_remote_code=True
@@ -23,7 +23,7 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    # Initialize Base Model in FP16
+    # 2. Initialize Raw Base Model
     device_map = "cuda" if torch.cuda.is_available() else "cpu"
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
@@ -32,7 +32,7 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
         trust_remote_code=True
     )
 
-    # Configure LoRA Adapters
+    # 3. Configure LoRA Parameters (SFTTrainer handles wrapping)
     peft_config = LoraConfig(
         r=lora_cfg["r"],
         lora_alpha=lora_cfg["lora_alpha"],
@@ -42,12 +42,8 @@ def setup_model_and_tokenizer(config_path="configs/train_config.yaml"):
         task_type=TaskType.CAUSAL_LM
     )
 
-    # Apply PEFT wrapper
-    model = get_peft_model(model, peft_config)
-    print("\n[+] Trainable Parameters Breakdown:")
-    model.print_trainable_parameters()
-
     return model, tokenizer, peft_config
 
 if __name__ == "__main__":
     model, tokenizer, peft_cfg = setup_model_and_tokenizer()
+    print(f"[+] Base model loaded: {type(model).__name__}")
