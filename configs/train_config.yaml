@@ -1,0 +1,26 @@
+model:
+  base_model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+  max_seq_length: 512
+
+dataset:
+  name: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
+  train_split: "train[:3000]"
+  eval_split: "train[3000:3500]"
+
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+training:
+  output_dir: "./adapters/qwen-customer-support-lora"
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  num_train_epochs: 2
+  logging_steps: 10
+  fp16: true
+  optim: "adamw_torch"

@@ -1,0 +1,11 @@
+torch
+transformers>=4.43.0
+datasets
+peft
+trl
+bitsandbytes
+accelerate
+pyyaml
+fastapi
+uvicorn[standard]
+pydantic
