@@ -3,7 +3,7 @@ model:
   max_seq_length: 512
 
 dataset:
-  name: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
+  name: "keivalya/MedQuad-MedicalQnADataset"
   train_split: "train[:3000]"
   eval_split: "train[3000:3500]"
 
@@ -16,7 +16,7 @@ lora:
   task_type: "CAUSAL_LM"
 
 training:
-  output_dir: "./adapters/qwen-customer-support-lora"
+  output_dir: "./adapters/qwen-medquad-lora"
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
   learning_rate: 0.0002

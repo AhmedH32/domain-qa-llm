@@ -4,21 +4,18 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 SYSTEM_PROMPT = (
-    "You are an expert customer support specialist. "
-    "Provide clear, professional, and accurate solutions to user inquiries."
+    "You are a knowledgeable and empathetic medical AI assistant. "
+    "Provide accurate, clear, and professional information regarding health, diseases, and medical conditions."
 )
 
 TEST_QUERIES = [
-    "I want to track my order #98234, but the page is giving a 404 error.",
-    "Can I get a refund for a subscription I canceled yesterday?",
-    "How do I change the shipping address for an item that hasn't shipped yet?",
-    "My discount code isn't applying at checkout."
+    "What are the early warning signs and symptoms of Type 2 Diabetes?",
+    "How is hypertension diagnosed and managed lifestyle-wise?",
+    "What are the common side effects of amoxicillin?",
+    "What treatments are available for acute migraine headaches?"
 ]
 
 def generate_response(model, tokenizer, query, device):
-    """
-    Formats query into ChatML prompt, tokenizes, and returns generated assistant response.
-    """
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": query}
@@ -40,15 +37,11 @@ def generate_response(model, tokenizer, query, device):
             pad_token_id=tokenizer.pad_token_id
         )
 
-    # Decode only generated response tokens (exclude prompt input)
     input_length = inputs["input_ids"].shape[1]
     generated_tokens = outputs[0][input_length:]
     return tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
 
 def run_evaluation(config_path="configs/train_config.yaml"):
-    """
-    Executes comparative evaluation between un-tuned base model and LoRA adapter.
-    """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -56,7 +49,6 @@ def run_evaluation(config_path="configs/train_config.yaml"):
     adapter_dir = config["training"]["output_dir"]
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 1. Load Base Model & Tokenizer
     print(f"[+] Loading Base Model: '{base_model_name}' on [{device}]...")
     tokenizer = AutoTokenizer.from_pretrained(base_model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -69,32 +61,22 @@ def run_evaluation(config_path="configs/train_config.yaml"):
         trust_remote_code=True
     )
 
-    # 2. Run Baseline Inference
     print("\n[+] Generating Baseline Model Responses...")
-    base_results = []
-    for query in TEST_QUERIES:
-        res = generate_response(base_model, tokenizer, query, device)
-        base_results.append(res)
+    base_results = [generate_response(base_model, tokenizer, q, device) for q in TEST_QUERIES]
 
-    # 3. Attach LoRA Adapter to Base Model
-    print(f"\n[+] Injecting LoRA Adapter from: '{adapter_dir}'...")
+    print(f"\n[+] Injecting LoRA Medical Adapter from: '{adapter_dir}'...")
     ft_model = PeftModel.from_pretrained(base_model, adapter_dir)
     ft_model.eval()
 
-    # 4. Run Fine-Tuned Inference
-    print("\n[+] Generating Fine-Tuned Model Responses...")
-    ft_results = []
-    for query in TEST_QUERIES:
-        res = generate_response(ft_model, tokenizer, query, device)
-        ft_results.append(res)
+    print("\n[+] Generating Fine-Tuned Medical Responses...")
+    ft_results = [generate_response(ft_model, tokenizer, q, device) for q in TEST_QUERIES]
 
-    # 5. Output Comparative Delta Table
     print("\n" + "=" * 90)
-    print("                     EVALUATION & DELTA ANALYSIS TABLE")
+    print("                MEDICAL DOMAIN EVALUATION & DELTA TABLE")
     print("=" * 90)
 
     for idx, query in enumerate(TEST_QUERIES, 1):
-        print(f"\n[TEST QUERY {idx}]: {query}")
+        print(f"\n[MEDICAL QUERY {idx}]: {query}")
         print("-" * 90)
         print(f"| UN-TUNED BASELINE   | {base_results[idx-1]}")
         print("-" * 90)
