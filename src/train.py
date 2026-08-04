@@ -17,7 +17,7 @@ def run_training(config_path="configs/train_config.yaml"):
     train_cfg = config["training"]
     max_seq_len = config["model"]["max_seq_length"]
 
-    # 2. Configure SFT Parameters via SFTConfig
+    # 2. Configure SFT Parameters (Standard TrainingArguments)
     sft_config = SFTConfig(
         output_dir=train_cfg["output_dir"],
         per_device_train_batch_size=train_cfg["per_device_train_batch_size"],
@@ -27,21 +27,21 @@ def run_training(config_path="configs/train_config.yaml"):
         logging_steps=train_cfg["logging_steps"],
         fp16=train_cfg.get("fp16", torch.cuda.is_available()),
         optim=train_cfg.get("optim", "adamw_torch"),
-        max_seq_length=max_seq_len,
-        packing=False,
         save_strategy="epoch",
         eval_strategy="epoch",
         report_to="none"
     )
 
-    # 3. Instantiate SFTTrainer
+    # 3. Instantiate SFTTrainer with max_seq_length and packing
     trainer = SFTTrainer(
         model=model,
         args=sft_config,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         processing_class=tokenizer,
-        peft_config=peft_config
+        peft_config=peft_config,
+        max_seq_length=max_seq_len,
+        packing=False
     )
 
     # 4. Train and Persist Weights
