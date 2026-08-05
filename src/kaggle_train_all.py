@@ -22,7 +22,7 @@ ZIP_OUTPUT_PATH = os.path.join(ROOT_DIR, "all_adapters")
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
 
 def save_loss_plot(log_history, output_dir, agent_name):
-    """Generates and saves cross-entropy SFT loss curve for the domain adapter."""
+    """Generates and saves cross-entropy SFT loss curve inside the domain directory."""
     steps, losses = [], []
     for log in log_history:
         if "loss" in log and "step" in log:
@@ -121,6 +121,20 @@ def train_all():
     os.makedirs(ADAPTERS_DIR, exist_ok=True)
 
     for agent in AGENTS:
+        output_dir = os.path.join(ADAPTERS_DIR, f"qwen-{agent['name']}-lora")
+        single_zip_base = os.path.join(ROOT_DIR, f"qwen-{agent['name']}-lora")
+        single_zip_file = f"{single_zip_base}.zip"
+
+        # Checkpoint Recovery: If a standalone zip exists, restore it to adapters directory
+        if os.path.exists(single_zip_file) and not os.path.exists(os.path.join(output_dir, "adapter_config.json")):
+            print(f"[+] Restoring {agent['name'].upper()} from checkpoint archive: {single_zip_file}")
+            shutil.unpack_archive(single_zip_file, output_dir)
+
+        # Skip training if adapter is already trained & extracted
+        if os.path.exists(os.path.join(output_dir, "adapter_config.json")):
+            print(f"\n[=] SKIPPING {agent['name'].upper()} (Already trained & checkpointed)")
+            continue
+
         print(f"\n" + "="*60)
         print(f"[+] STARTING TRAINING: {agent['name'].upper()}")
         print("="*60)
@@ -131,11 +145,14 @@ def train_all():
             trust_remote_code=True
         ).to("cuda")
 
-        output_dir = os.path.join(ADAPTERS_DIR, f"qwen-{agent['name']}-lora")
-
         raw_ds = load_dataset(agent["repo"], split=agent["split"])
         max_rows = min(2000, len(raw_ds))
-        train_ds = raw_ds.select(range(max_rows)).map(agent["map_fn"])
+        
+        # Format dataset and strip raw headers to prevent TRL format conflicts
+        train_ds = raw_ds.select(range(max_rows)).map(
+            agent["map_fn"],
+            remove_columns=raw_ds.column_names
+        )
 
         peft_config = LoraConfig(
             r=16,
@@ -169,16 +186,31 @@ def train_all():
 
         trainer.train()
 
-        print(f"[+] Saving loss graph and adapter to: {output_dir}")
-        save_loss_plot(trainer.state.log_history, output_dir, agent["name"])
+        # 1. Save model weights and tokenizer
+        print(f"[+] Saving model weights and tokenizer to: {output_dir}")
         trainer.model.save_pretrained(output_dir)
         tokenizer.save_pretrained(output_dir)
+
+        # 2. Save loss curve plot
+        print(f"[+] Saving loss graph to: {os.path.join(output_dir, 'loss_curve.png')}")
+        save_loss_plot(trainer.state.log_history, output_dir, agent["name"])
+
+        # 3. Save formatted training dataset
+        dataset_output_path = os.path.join(output_dir, "train_dataset.jsonl")
+        print(f"[+] Exporting training dataset samples to: {dataset_output_path}")
+        train_ds.to_json(dataset_output_path)
+
+        # 4. Immediate Checkpoint: Zip adapter + graph + dataset together
+        print(f"[+] Creating standalone zip archive for '{agent['name'].upper()}'...")
+        shutil.make_archive(single_zip_base, 'zip', output_dir)
+        print(f"  ✓ Checkpoint saved: {single_zip_file}")
 
         del trainer, base_model
         gc.collect()
         torch.cuda.empty_cache()
 
-    print(f"\n[+] Compressing all adapters into '{ZIP_OUTPUT_PATH}.zip'...")
+    # Create master archive with all 6 domains
+    print(f"\n[+] Compressing all adapters, graphs, and datasets into master archive '{ZIP_OUTPUT_PATH}.zip'...")
     shutil.make_archive(ZIP_OUTPUT_PATH, 'zip', ADAPTERS_DIR)
     print("[+] Training pipeline finished successfully.")
 
