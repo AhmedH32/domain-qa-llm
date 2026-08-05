@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 app = FastAPI(title="Multi-Domain QA LLM Engine")
 
-# Thread lock to prevent PEFT runtime adapter collision during parallel requests
+# Global thread lock to ensure atomic GPU PEFT operations and prevent race conditions
 gpu_lock = threading.Lock()
 
 app.add_middleware(
@@ -22,12 +22,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_MODEL_ID = "Qwen/Qwen2.5-0.5B"
+BASE_MODEL_ID = "Qwen/Qwen2.5-1.5B"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 ADAPTERS_DIR = os.path.join(ROOT_DIR, "adapters")
 
-ALL_POSSIBLE_DOMAINS = ["us_law", "agriculture", "fitness", "sql", "python", "cpp"]
+ALL_POSSIBLE_DOMAINS = ["us_law", "agriculture", "fitness", "sql", "python", "cpp", "medical"]
+
+DOMAIN_DESCRIPTIONS = {
+    "us_law": "US legal principles and contract law",
+    "agriculture": "agriculture, botany, and soil management",
+    "fitness": "fitness, exercise form, and strength training",
+    "sql": "SQL database querying and database design",
+    "python": "Python programming and software engineering",
+    "cpp": "C++ programming, memory management, and OOP",
+    "medical": "medical diagnostics, clinical symptoms, and healthcare guidance"
+}
 
 DOMAIN_EXEMPLARS = {
     "us_law": [
@@ -65,6 +75,12 @@ DOMAIN_EXEMPLARS = {
         "What is the difference between std::move and std::forward in C++11?",
         "How to avoid memory leaks when using dynamic allocation with new and delete?",
         "How to use STL containers like std::vector and std::unordered_map?"
+    ],
+    "medical": [
+        "What are the early warning signs and symptoms of Type 2 Diabetes?",
+        "How is high blood pressure diagnosed and managed clinically?",
+        "What are the common side effects and risks of long-term NSAID use?",
+        "What causes acute chest pain and when is it a medical emergency?"
     ]
 }
 
@@ -97,7 +113,7 @@ if AVAILABLE_DOMAINS:
 
     AVAILABLE_CENTROIDS_TENSOR = torch.cat(AVAILABLE_CENTROIDS, dim=0)
 
-def classify_and_weight_intent(prompt: str, blend_threshold: float = 0.30):
+def classify_and_weight_intent(prompt: str, blend_threshold: float = 0.20):
     if not AVAILABLE_DOMAINS:
         return [], [], {}
 
@@ -106,31 +122,39 @@ def classify_and_weight_intent(prompt: str, blend_threshold: float = 0.30):
     
     raw_scores = {domain: round(float(sim.item()), 4) for domain, sim in zip(AVAILABLE_DOMAINS, similarities)}
     
-    temperature = 0.1
+    temperature = 0.15
     probs = torch.softmax(similarities / temperature, dim=0)
     
-    active_adapters = []
-    active_weights = []
-    
+    detected_pairs = []
     for idx, prob in enumerate(probs):
         w = float(prob.item())
         if w >= blend_threshold:
-            active_adapters.append(AVAILABLE_DOMAINS[idx])
-            active_weights.append(w)
+            detected_pairs.append((AVAILABLE_DOMAINS[idx], w))
             
-    if not active_adapters:
+    if not detected_pairs:
         top_idx = int(torch.argmax(similarities).item())
-        active_adapters = [AVAILABLE_DOMAINS[top_idx]]
-        active_weights = [1.0]
-    else:
-        tot = sum(active_weights)
-        active_weights = [w / tot for w in active_weights]
+        detected_pairs = [(AVAILABLE_DOMAINS[top_idx], 1.0)]
         
-    return active_adapters, active_weights, raw_scores
+    detected_pairs.sort(key=lambda x: x[1], reverse=True)
+    
+    # Cap at TOP-2 max to prevent low-rank weight collision
+    top_pairs = detected_pairs[:2]
+    
+    active_adapters = [p[0] for p in top_pairs]
+    raw_weights = [p[1] for p in top_pairs]
+    
+    tot = sum(raw_weights)
+    norm_weights = [w / tot for w in raw_weights]
+    
+    return active_adapters, norm_weights, raw_scores
 
-print("[+] Loading Tokenizer & Qwen2.5-0.5B Base Model onto CUDA...")
+print(f"[+] Loading Tokenizer & Foundation Model ({BASE_MODEL_ID}) onto CUDA...")
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_ID, trust_remote_code=True)
 tokenizer.pad_token = tokenizer.eos_token
+
+IM_END_ID = tokenizer.convert_tokens_to_ids("<|im_end|>")
+EOS_ID = tokenizer.eos_token_id
+STOP_IDS = list(set(filter(None, [EOS_ID, IM_END_ID])))
 
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_ID,
@@ -160,7 +184,7 @@ print("[+] System initialization finished successfully.\n")
 class ChatRequest(BaseModel):
     prompt: str
     max_tokens: int = 256
-    temperature: float = 0.7
+    temperature: float = 0.4
 
 @app.get("/api/status")
 def status_endpoint():
@@ -180,18 +204,23 @@ def chat_endpoint(request: ChatRequest):
                 weights_dict = {}
                 raw_scores = {}
                 active_model = base_model
+                system_instruction = "You are a helpful multi-domain expert AI assistant."
             else:
                 active_adapters, weights, raw_scores = classify_and_weight_intent(request.prompt)
                 weights_dict = {domain: round(w, 4) for domain, w in zip(active_adapters, weights)}
+                
+                domain_specs = [DOMAIN_DESCRIPTIONS[d] for d in active_adapters]
+                system_instruction = f"You are an expert AI assistant specializing in {', '.join(domain_specs)}. Provide a clear, structured, and complete answer."
                 
                 if len(active_adapters) == 1:
                     selected_domain = active_adapters[0]
                     peft_model.set_adapter(selected_domain)
                     routing_mode = f"Hard Switch -> [{selected_domain.upper()}]"
                 else:
+                    scaled_weights = [w * 0.75 for w in weights]
                     peft_model.add_weighted_adapter(
                         adapters=active_adapters,
-                        weights=weights,
+                        weights=scaled_weights,
                         adapter_name="dynamic_blend",
                         combination_type="linear"
                     )
@@ -202,7 +231,7 @@ def chat_endpoint(request: ChatRequest):
                 active_model = peft_model
 
             formatted_prompt = (
-                f"<|im_start|>system\nYou are a helpful multi-domain expert AI assistant.<|im_end|>\n"
+                f"<|im_start|>system\n{system_instruction}<|im_end|>\n"
                 f"<|im_start|>user\n{request.prompt}<|im_end|>\n"
                 f"<|im_start|>assistant\n"
             )
@@ -214,12 +243,22 @@ def chat_endpoint(request: ChatRequest):
                     **inputs,
                     max_new_tokens=request.max_tokens,
                     temperature=request.temperature,
+                    top_p=0.85,
+                    repetition_penalty=1.15,
                     do_sample=True if request.temperature > 0 else False,
-                    pad_token_id=tokenizer.pad_token_id
+                    eos_token_id=STOP_IDS,
+                    pad_token_id=tokenizer.pad_token_id,
+                    stop_strings=["<|im_end|>"],
+                    tokenizer=tokenizer
                 )
                 
             generated_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-            response_text = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+            raw_response = tokenizer.decode(generated_tokens, skip_special_tokens=False)
+            
+            clean_response = raw_response.split("<|im_end|>")[0].split("<|endoftext|>")[0]
+            if ".WARNING:" in clean_response:
+                clean_response = clean_response.split(".WARNING:")[0]
+            clean_response = clean_response.strip()
             
             if len(active_adapters) > 1 and peft_model is not None:
                 peft_model.delete_adapter("dynamic_blend")
@@ -230,7 +269,7 @@ def chat_endpoint(request: ChatRequest):
                 "active_adapters": active_adapters,
                 "adapter_weights": weights_dict,
                 "domain_scores": raw_scores,
-                "response": response_text
+                "response": clean_response
             }
 
     except Exception as e:

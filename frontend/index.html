@@ -19,7 +19,7 @@
             Multi-Domain QA LLM Engine
         </h1>
         <p class="text-slate-400 mt-2 text-sm md:text-base">
-            Qwen2.5-0.5B + SentenceTransformer CPU Routing + Runtime PEFT Adapter Fusion
+            Qwen2.5-1.5B + SentenceTransformer CPU Routing + Runtime PEFT Adapter Fusion
         </p>
     </header>
 
@@ -28,17 +28,21 @@
         <!-- Left Column: Input & Controls (5 cols) -->
         <div class="lg:col-span-5 flex flex-col gap-6">
             
-            <!-- Quick Demo Prompts -->
+            <!-- Quick Demo Presets -->
             <div class="glass-card p-5 rounded-2xl">
                 <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Presentation Quick Presets</h2>
                 <div class="flex flex-col gap-2">
-                    <button onclick="setPrompt('What are the legal requirements for a binding contract under US law?')" 
+                    <button onclick="setPrompt('What are the legal requirements for a valid binding contract under US law?')" 
                             class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
                         ⚖️ <span class="font-semibold text-slate-200">US Law:</span> Contract law requirements
                     </button>
-                    <button onclick="setPrompt('How do I fix fungal leaf spot on tomato plants using organic farming?')" 
+                    <button onclick="setPrompt('How do I identify and treat fungal leaf spot on tomato plants?')" 
                             class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
                         🌱 <span class="font-semibold text-slate-200">Agriculture:</span> Tomato plant diseases
+                    </button>
+                    <button onclick="setPrompt('What are the early warning signs and symptoms of Type 2 Diabetes?')" 
+                            class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
+                        🩺 <span class="font-semibold text-slate-200">Medical:</span> Type 2 Diabetes symptoms
                     </button>
                     <button onclick="setPrompt('How to maintain proper bar path during heavy deadlifts?')" 
                             class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
@@ -87,8 +91,8 @@
                 <!-- Domain Vector Similarities -->
                 <div class="border-t border-slate-800 pt-4">
                     <h3 class="text-xs font-semibold text-slate-400 mb-2">Vector Similarity Breakdown (Cosine)</h3>
-                    <div id="scoresContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <!-- Scores rendered dynamically -->
+                    <div id="scoresContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        <!-- Scores rendered dynamically for all 7 domains -->
                     </div>
                 </div>
             </div>
@@ -134,7 +138,6 @@
                 const data = await res.json();
 
                 if (data.status === "success") {
-                    // Update Badge
                     badge.innerText = data.routing_mode;
                     if (data.active_adapters.length > 1) {
                         badge.className = "px-3 py-1 text-xs font-bold rounded-full bg-indigo-950 text-indigo-300 border border-indigo-500/40";
@@ -142,7 +145,6 @@
                         badge.className = "px-3 py-1 text-xs font-bold rounded-full bg-sky-950 text-sky-300 border border-sky-500/40";
                     }
 
-                    // Render Active Weights
                     const weightsContainer = document.getElementById('weightsContainer');
                     weightsContainer.innerHTML = '';
                     
@@ -161,7 +163,6 @@
                         `;
                     }
 
-                    // Render All Domain Scores
                     const scoresContainer = document.getElementById('scoresContainer');
                     scoresContainer.innerHTML = '';
                     for (const [domain, score] of Object.entries(data.domain_scores)) {
@@ -174,7 +175,6 @@
                         `;
                     }
 
-                    // Render Response
                     responseBox.innerText = data.response;
                 } else {
                     responseBox.innerText = "Error: " + data.detail;

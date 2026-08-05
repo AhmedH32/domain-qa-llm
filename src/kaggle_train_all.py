@@ -1,6 +1,5 @@
 import os
 
-# Pin execution to single GPU to prevent PyTorch DataParallel tensor scatter errors
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import gc
@@ -13,16 +12,15 @@ from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
-# Dynamically resolve project root directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 ADAPTERS_DIR = os.path.join(ROOT_DIR, "adapters")
 ZIP_OUTPUT_PATH = os.path.join(ROOT_DIR, "all_adapters")
 
-MODEL_ID = "Qwen/Qwen2.5-0.5B"
+# Upgraded to 1.5B foundation model
+MODEL_ID = "Qwen/Qwen2.5-1.5B"
 
 def save_loss_plot(log_history, output_dir, agent_name):
-    """Generates and saves cross-entropy SFT loss curve inside the domain directory."""
     steps, losses = [], []
     for log in log_history:
         if "loss" in log and "step" in log:
@@ -35,7 +33,7 @@ def save_loss_plot(log_history, output_dir, agent_name):
     os.makedirs(output_dir, exist_ok=True)
     plt.figure(figsize=(8, 5))
     plt.plot(steps, losses, marker="o", color="#0284c7", linewidth=2, label=f"{agent_name.upper()} SFT Loss")
-    plt.title(f"Qwen2.5-0.5B LoRA Convergence - {agent_name.upper()}")
+    plt.title(f"Qwen2.5-1.5B LoRA Convergence - {agent_name.upper()}")
     plt.xlabel("Training Steps")
     plt.ylabel("Cross-Entropy Loss")
     plt.grid(True, linestyle="--", alpha=0.6)
@@ -86,11 +84,16 @@ AGENTS = [
         "repo": "sahil2801/CodeAlpaca-20k",
         "split": "train",
         "map_fn": lambda x: {"text": format_chatml("You are a C++ programmer. Provide standard library syntax, clear OOP code, and robust logic.", x["instruction"], x["output"])}
+    },
+    {
+        "name": "medical",
+        "repo": "medalpaca/medical_meadow_medical_flashcards",
+        "split": "train",
+        "map_fn": lambda x: {"text": format_chatml("You are a medical doctor and clinical specialist.", x["input"], x["output"])}
     }
 ]
 
 def verify_all_datasets():
-    """Validates Hugging Face Hub dataset availability prior to model loading."""
     print("=" * 60)
     print("[+] PRE-FLIGHT CHECK: VERIFYING HUGGINGFACE DATASETS")
     print("=" * 60)
@@ -105,7 +108,7 @@ def verify_all_datasets():
     
     if failed:
         raise RuntimeError(f"[-] Training pipeline aborted. Unavailable datasets: {failed}")
-    print("[+] All 6 datasets verified successfully! Proceeding to training.\n")
+    print(f"[+] All {len(AGENTS)} datasets verified successfully! Proceeding to training.\n")
 
 def train_all():
     verify_all_datasets()
@@ -125,12 +128,10 @@ def train_all():
         single_zip_base = os.path.join(ROOT_DIR, f"qwen-{agent['name']}-lora")
         single_zip_file = f"{single_zip_base}.zip"
 
-        # Checkpoint Recovery: If a standalone zip exists, restore it to adapters directory
         if os.path.exists(single_zip_file) and not os.path.exists(os.path.join(output_dir, "adapter_config.json")):
             print(f"[+] Restoring {agent['name'].upper()} from checkpoint archive: {single_zip_file}")
             shutil.unpack_archive(single_zip_file, output_dir)
 
-        # Skip training if adapter is already trained & extracted
         if os.path.exists(os.path.join(output_dir, "adapter_config.json")):
             print(f"\n[=] SKIPPING {agent['name'].upper()} (Already trained & checkpointed)")
             continue
@@ -148,7 +149,6 @@ def train_all():
         raw_ds = load_dataset(agent["repo"], split=agent["split"])
         max_rows = min(2000, len(raw_ds))
         
-        # Format dataset and strip raw headers to prevent TRL format conflicts
         train_ds = raw_ds.select(range(max_rows)).map(
             agent["map_fn"],
             remove_columns=raw_ds.column_names
@@ -186,21 +186,17 @@ def train_all():
 
         trainer.train()
 
-        # 1. Save model weights and tokenizer
         print(f"[+] Saving model weights and tokenizer to: {output_dir}")
         trainer.model.save_pretrained(output_dir)
         tokenizer.save_pretrained(output_dir)
 
-        # 2. Save loss curve plot
         print(f"[+] Saving loss graph to: {os.path.join(output_dir, 'loss_curve.png')}")
         save_loss_plot(trainer.state.log_history, output_dir, agent["name"])
 
-        # 3. Save formatted training dataset
         dataset_output_path = os.path.join(output_dir, "train_dataset.jsonl")
         print(f"[+] Exporting training dataset samples to: {dataset_output_path}")
         train_ds.to_json(dataset_output_path)
 
-        # 4. Immediate Checkpoint: Zip adapter + graph + dataset together
         print(f"[+] Creating standalone zip archive for '{agent['name'].upper()}'...")
         shutil.make_archive(single_zip_base, 'zip', output_dir)
         print(f"  ✓ Checkpoint saved: {single_zip_file}")
@@ -209,14 +205,12 @@ def train_all():
         gc.collect()
         torch.cuda.empty_cache()
 
-    # Create master archive with all 6 domains
-    print(f"\n[+] Compressing all adapters, graphs, and datasets into master archive '{ZIP_OUTPUT_PATH}.zip'...")
+    print(f"\n[+] Compressing all adapters into master archive '{ZIP_OUTPUT_PATH}.zip'...")
     shutil.make_archive(ZIP_OUTPUT_PATH, 'zip', ADAPTERS_DIR)
     print("[+] Training pipeline finished successfully.")
 
 if __name__ == "__main__":
     train_all()
-    
     try:
         from src.evaluate_all import run_full_evaluation
         run_full_evaluation()
