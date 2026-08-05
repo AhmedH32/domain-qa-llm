@@ -49,9 +49,9 @@ def format_chatml(system_prompt, user_msg, assistant_msg):
 AGENTS = [
     {
         "name": "us_law",
-        "repo": "jonathanli/legal-alpaca",
+        "repo": "harpreet-singh/legal_advice",
         "split": "train",
-        "map_fn": lambda x: {"text": format_chatml("You are an expert in US Law.", x["instruction"], x["output"])}
+        "map_fn": lambda x: {"text": format_chatml("You are an expert in US Law.", x["question"], x["answer"])}
     },
     {
         "name": "agriculture",
@@ -101,7 +101,6 @@ def train_all():
         print(f"[+] STARTING TRAINING: {agent['name'].upper()}")
         print("="*60)
 
-        # Load fresh base model instance per iteration to avoid PEFT wrapper stacking
         base_model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.float16,
