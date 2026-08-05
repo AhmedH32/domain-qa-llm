@@ -10,3 +10,4 @@ pyyaml
 fastapi
 uvicorn[standard]
 pydantic
+matplotlib
