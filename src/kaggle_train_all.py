@@ -1,5 +1,9 @@
-import gc
 import os
+
+# Pin execution to single GPU to prevent PyTorch DataParallel tensor scatter errors
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+import gc
 import shutil
 
 import matplotlib.pyplot as plt
@@ -121,7 +125,6 @@ def train_all():
         print(f"[+] STARTING TRAINING: {agent['name'].upper()}")
         print("="*60)
 
-        # Load fresh base model explicitly onto CUDA to prevent Accelerate partial wrapper
         base_model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.float16,
