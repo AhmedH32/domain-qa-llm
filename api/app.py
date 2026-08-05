@@ -1,15 +1,18 @@
 import os
-import time
+import threading
 
 import torch
-import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from peft import PeftModel
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer, util
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-app = FastAPI(title="Multi-LoRA Dynamic Agent API")
+app = FastAPI(title="Multi-Domain QA LLM Engine")
+
+# Thread lock to prevent PEFT runtime adapter collision during parallel requests
+gpu_lock = threading.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,172 +22,220 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class ChatRequest(BaseModel):
-    prompt: str = Field(..., example="How do I declare a vector in C++?")
-    max_tokens: int = Field(default=200, ge=1, le=512)
-    temperature: float = Field(default=0.4, ge=0.0, le=1.0)
+BASE_MODEL_ID = "Qwen/Qwen2.5-0.5B"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+ADAPTERS_DIR = os.path.join(ROOT_DIR, "adapters")
 
-class ChatResponse(BaseModel):
-    response: str
-    intent_detected: str
-    adapter_used: str
-    switch_time_ms: float
-    device: str
+ALL_POSSIBLE_DOMAINS = ["us_law", "agriculture", "fitness", "sql", "python", "cpp"]
 
-model_stack = {}
-
-def classify_intent(prompt: str) -> str:
-    """Fast keyword intent classifier (<1ms execution time)."""
-    p = prompt.lower()
-    
-    if any(k in p for k in ["law", "court", "legal", "statute", "judge", "sue", "attorney", "liability", "contract", "crime"]):
-        return "us_law"
-    if any(k in p for k in ["soil", "crop", "plant", "harvest", "fertilizer", "pest", "botany", "seed", "irrigation"]):
-        return "agriculture"
-    if any(k in p for k in ["workout", "muscle", "gym", "squat", "bench", "deadlift", "cardio", "protein", "fitness", "exercise"]):
-        return "fitness"
-    if any(k in p for k in ["sql", "select ", "database", "table", "join ", "where ", "query", "postgres", "mysql"]):
-        return "sql"
-    if any(k in p for k in ["python", "def ", "import ", "dict", "list", "tuple", "pandas", "numpy", "pip "]):
-        return "python"
-    if any(k in p for k in ["c++", "cpp", "std::", "vector", "include", "pointer", "struct", "class ", "cout"]):
-        return "cpp"
-        
-    return "medical"
-
-@app.on_event("startup")
-def load_multi_adapter_stack():
-    config_path = "configs/train_config.yaml"
-    base_name = "Qwen/Qwen2.5-0.5B"
-    adapter_map = {
-        "medical": "./adapters/qwen-medquad-lora",
-        "us_law": "./adapters/qwen-us_law-lora",
-        "agriculture": "./adapters/qwen-agriculture-lora",
-        "fitness": "./adapters/qwen-fitness-lora",
-        "sql": "./adapters/qwen-sql-lora",
-        "python": "./adapters/qwen-python-lora",
-        "cpp": "./adapters/qwen-cpp-lora"
-    }
-
-    if os.path.exists(config_path):
-        with open(config_path, "r") as f:
-            cfg = yaml.safe_load(f)
-            base_name = cfg.get("model", {}).get("base_model_name", base_name)
-            if "adapters" in cfg:
-                adapter_map = cfg["adapters"]
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[+] Initializing Multi-Adapter Backend on [{device.upper()}]...")
-
-    tokenizer = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_name,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        device_map=device,
-        trust_remote_code=True
-    )
-
-    loaded_adapters = []
-    existing_adapters = {k: v for k, v in adapter_map.items() if os.path.exists(v)}
-
-    if existing_adapters:
-        first_key = list(existing_adapters.keys())[0]
-        print(f"[+] Loading primary adapter: '{first_key}' from {existing_adapters[first_key]}")
-        model = PeftModel.from_pretrained(base_model, existing_adapters[first_key], adapter_name=first_key)
-        loaded_adapters.append(first_key)
-
-        for name, path in existing_adapters.items():
-            if name != first_key:
-                print(f"[+] Attaching secondary adapter: '{name}' from {path}")
-                model.load_adapter(path, adapter_name=name)
-                loaded_adapters.append(name)
-
-        model.eval()
-    else:
-        print("[-] Warning: No LoRA adapters found. Serving raw base model.")
-        model = base_model
-
-    model_stack["model"] = model
-    model_stack["tokenizer"] = tokenizer
-    model_stack["device"] = device
-    model_stack["loaded_adapters"] = loaded_adapters
-    print(f"[+] Active VRAM Adapters: {loaded_adapters}")
-
-@app.get("/health")
-def health_check():
-    return {
-        "status": "healthy",
-        "device": model_stack.get("device", "unknown"),
-        "active_adapters": model_stack.get("loaded_adapters", [])
-    }
-
-@app.post("/api/chat", response_model=ChatResponse)
-def generate_chat_response(request: ChatRequest):
-    if "model" not in model_stack:
-        raise HTTPException(status_code=503, detail="Model stack uninitialized.")
-
-    model = model_stack["model"]
-    tokenizer = model_stack["tokenizer"]
-    device = model_stack["device"]
-
-    target_agent = classify_intent(request.prompt)
-
-    t0 = time.perf_counter()
-    if isinstance(model, PeftModel):
-        if target_agent in model_stack["loaded_adapters"]:
-            model.set_adapter(target_agent)
-            active_adapter = f"qwen-{target_agent}-lora"
-        else:
-            fallback = model_stack["loaded_adapters"][0] if model_stack["loaded_adapters"] else "base"
-            model.set_adapter(fallback)
-            active_adapter = f"qwen-{fallback}-lora (fallback)"
-    else:
-        active_adapter = "raw-base-model"
-    
-    switch_time_ms = round((time.perf_counter() - t0) * 1000, 2)
-
-    system_prompts = {
-        "medical": "You are a knowledgeable and empathetic medical AI assistant.",
-        "us_law": "You are an expert in US Legal statutes and case law.",
-        "agriculture": "You are an expert in agricultural science and crop health.",
-        "fitness": "You are a fitness coach focused on exercise science and strength training.",
-        "sql": "You are a database engineer. Output clear SQL queries.",
-        "python": "You are a Python software engineer. Output clean Python code.",
-        "cpp": "You are a C++ programmer. Output clean, idiomatic C++ code."
-    }
-
-    sys_prompt = system_prompts.get(target_agent, "You are a helpful AI assistant.")
-
-    messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": request.prompt}
+DOMAIN_EXEMPLARS = {
+    "us_law": [
+        "What are the legal requirements for a valid binding contract?",
+        "What is the statute of limitations for personal injury claims?",
+        "Can a landlord evict a tenant without prior written notice?",
+        "What constitutes copyright infringement under federal law?"
+    ],
+    "agriculture": [
+        "How do I identify and treat fungal leaf spot on tomato plants?",
+        "What is the optimal soil pH range for growing blueberries?",
+        "How to apply nitrogen fertilizer to maize during early growth?",
+        "What are the best crop rotation strategies to prevent soil degradation?"
+    ],
+    "fitness": [
+        "How to maintain proper bar path and form during heavy conventional deadlifts?",
+        "What is the optimal rep range for muscle hypertrophy versus strength?",
+        "How much daily cardio should I perform while maintaining muscle mass?",
+        "How to structure a Push-Pull-Legs workout split for beginners?"
+    ],
+    "sql": [
+        "How to write an SQL query using LEFT JOIN and GROUP BY with aggregation?",
+        "What is the difference between WHERE and HAVING clauses in SQL?",
+        "How to create an index to optimize slow database queries?",
+        "What are database normalization rules from 1NF to 3NF?"
+    ],
+    "python": [
+        "How to write a Python script using list comprehensions and generators?",
+        "What is the difference between deepcopy and shallow copy in Python?",
+        "How to handle exceptions using try except blocks properly?",
+        "How to parse JSON data using the standard library in Python?"
+    ],
+    "cpp": [
+        "How to implement an Object-Oriented C++ class using RAII and smart pointers?",
+        "What is the difference between std::move and std::forward in C++11?",
+        "How to avoid memory leaks when using dynamic allocation with new and delete?",
+        "How to use STL containers like std::vector and std::unordered_map?"
     ]
+}
+
+print("\n" + "="*60)
+print("[+] FAILSAFE INSPECTION: CHECKING LOCAL ADAPTER DIRECTORIES")
+print("="*60)
+
+AVAILABLE_DOMAINS = []
+for domain in ALL_POSSIBLE_DOMAINS:
+    adapter_path = os.path.join(ADAPTERS_DIR, f"qwen-{domain}-lora")
+    config_file = os.path.join(adapter_path, "adapter_config.json")
+    if os.path.exists(config_file):
+        AVAILABLE_DOMAINS.append(domain)
+        print(f"  ✓ ACTIVE ADAPTER: [{domain.upper()}] -> '{adapter_path}'")
+    else:
+        print(f"  ✗ MISSING ADAPTER: [{domain.upper()}] (Skipped by router)")
+
+print(f"\n[+] Total Available Domain Adapters: {len(AVAILABLE_DOMAINS)} / {len(ALL_POSSIBLE_DOMAINS)}")
+print("="*60 + "\n")
+
+print("[+] Initializing CPU SentenceTransformer router ('all-MiniLM-L6-v2')...")
+router_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+
+AVAILABLE_CENTROIDS = []
+if AVAILABLE_DOMAINS:
+    for domain in AVAILABLE_DOMAINS:
+        exemplar_vectors = router_model.encode(DOMAIN_EXEMPLARS[domain], convert_to_tensor=True)
+        centroid = torch.mean(exemplar_vectors, dim=0, keepdim=True)
+        AVAILABLE_CENTROIDS.append(centroid)
+
+    AVAILABLE_CENTROIDS_TENSOR = torch.cat(AVAILABLE_CENTROIDS, dim=0)
+
+def classify_and_weight_intent(prompt: str, blend_threshold: float = 0.30):
+    if not AVAILABLE_DOMAINS:
+        return [], [], {}
+
+    prompt_vector = router_model.encode(prompt, convert_to_tensor=True)
+    similarities = util.cos_sim(prompt_vector, AVAILABLE_CENTROIDS_TENSOR)[0]
     
-    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(device)
+    raw_scores = {domain: round(float(sim.item()), 4) for domain, sim in zip(AVAILABLE_DOMAINS, similarities)}
+    
+    temperature = 0.1
+    probs = torch.softmax(similarities / temperature, dim=0)
+    
+    active_adapters = []
+    active_weights = []
+    
+    for idx, prob in enumerate(probs):
+        w = float(prob.item())
+        if w >= blend_threshold:
+            active_adapters.append(AVAILABLE_DOMAINS[idx])
+            active_weights.append(w)
+            
+    if not active_adapters:
+        top_idx = int(torch.argmax(similarities).item())
+        active_adapters = [AVAILABLE_DOMAINS[top_idx]]
+        active_weights = [1.0]
+    else:
+        tot = sum(active_weights)
+        active_weights = [w / tot for w in active_weights]
+        
+    return active_adapters, active_weights, raw_scores
 
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=request.max_tokens,
-            temperature=request.temperature,
-            top_p=0.9,
-            repetition_penalty=1.2,
-            no_repeat_ngram_size=3,
-            do_sample=True if request.temperature > 0 else False,
-            pad_token_id=tokenizer.pad_token_id
-        )
+print("[+] Loading Tokenizer & Qwen2.5-0.5B Base Model onto CUDA...")
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_ID, trust_remote_code=True)
+tokenizer.pad_token = tokenizer.eos_token
 
-    input_length = inputs["input_ids"].shape[1]
-    response_text = tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True).strip()
+base_model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL_ID,
+    torch_dtype=torch.float16,
+    trust_remote_code=True
+).to("cuda")
 
-    return ChatResponse(
-        response=response_text,
-        intent_detected=target_agent.upper(),
-        adapter_used=active_adapter,
-        switch_time_ms=switch_time_ms if switch_time_ms > 0 else 0.85,
-        device=device
+peft_model = None
+if AVAILABLE_DOMAINS:
+    print("[+] Registering PeftModel adapters in VRAM...")
+    first_domain = AVAILABLE_DOMAINS[0]
+    first_path = os.path.join(ADAPTERS_DIR, f"qwen-{first_domain}-lora")
+    
+    peft_model = PeftModel.from_pretrained(
+        base_model,
+        first_path,
+        adapter_name=first_domain
     )
+    
+    for domain in AVAILABLE_DOMAINS[1:]:
+        adapter_path = os.path.join(ADAPTERS_DIR, f"qwen-{domain}-lora")
+        peft_model.load_adapter(adapter_path, adapter_name=domain)
+        print(f"  ✓ Registered '{domain}' in PEFT container.")
+
+print("[+] System initialization finished successfully.\n")
+
+class ChatRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 256
+    temperature: float = 0.7
+
+@app.get("/api/status")
+def status_endpoint():
+    return {
+        "status": "ready",
+        "available_domains": AVAILABLE_DOMAINS,
+        "total_available": len(AVAILABLE_DOMAINS)
+    }
+
+@app.post("/api/chat")
+def chat_endpoint(request: ChatRequest):
+    try:
+        with gpu_lock:
+            if not AVAILABLE_DOMAINS or peft_model is None:
+                routing_mode = "Base Model (Zero Adapters Loaded)"
+                active_adapters = []
+                weights_dict = {}
+                raw_scores = {}
+                active_model = base_model
+            else:
+                active_adapters, weights, raw_scores = classify_and_weight_intent(request.prompt)
+                weights_dict = {domain: round(w, 4) for domain, w in zip(active_adapters, weights)}
+                
+                if len(active_adapters) == 1:
+                    selected_domain = active_adapters[0]
+                    peft_model.set_adapter(selected_domain)
+                    routing_mode = f"Hard Switch -> [{selected_domain.upper()}]"
+                else:
+                    peft_model.add_weighted_adapter(
+                        adapters=active_adapters,
+                        weights=weights,
+                        adapter_name="dynamic_blend",
+                        combination_type="linear"
+                    )
+                    peft_model.set_adapter("dynamic_blend")
+                    blend_summary = " + ".join([f"{d.upper()} ({int(w*100)}%)" for d, w in zip(active_adapters, weights)])
+                    routing_mode = f"Dynamic Blend -> {blend_summary}"
+                
+                active_model = peft_model
+
+            formatted_prompt = (
+                f"<|im_start|>system\nYou are a helpful multi-domain expert AI assistant.<|im_end|>\n"
+                f"<|im_start|>user\n{request.prompt}<|im_end|>\n"
+                f"<|im_start|>assistant\n"
+            )
+            
+            inputs = tokenizer(formatted_prompt, return_tensors="pt").to("cuda")
+            
+            with torch.no_grad():
+                outputs = active_model.generate(
+                    **inputs,
+                    max_new_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                    do_sample=True if request.temperature > 0 else False,
+                    pad_token_id=tokenizer.pad_token_id
+                )
+                
+            generated_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+            response_text = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+            
+            if len(active_adapters) > 1 and peft_model is not None:
+                peft_model.delete_adapter("dynamic_blend")
+
+            return {
+                "status": "success",
+                "routing_mode": routing_mode,
+                "active_adapters": active_adapters,
+                "adapter_weights": weights_dict,
+                "domain_scores": raw_scores,
+                "response": response_text
+            }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

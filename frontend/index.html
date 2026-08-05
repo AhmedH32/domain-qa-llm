@@ -1,148 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Multi-Agent LoRA Assistant | Qwen2.5</title>
-  <style>
-    :root {
-      --bg: #0f172a;
-      --card: #1e293b;
-      --accent: #0284c7;
-      --accent-hover: #0369a1;
-      --text: #f8fafc;
-      --text-sub: #94a3b8;
-      --user-msg: #0369a1;
-      --ai-msg: #334155;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-    body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; }
-    header { background: var(--card); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
-    header h1 { font-size: 1.25rem; font-weight: 600; color: #38bdf8; }
-    .badge { background: #065f46; color: #34d399; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.85rem; }
-    main { flex: 1; display: flex; flex-direction: column; max-width: 900px; width: 100%; margin: 0 auto; padding: 1rem; overflow: hidden; }
-    
-    #terminal-banner {
-      background: #020617;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-      font-family: 'Courier New', Courier, monospace;
-      display: none;
-    }
-    .term-title { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-    .term-row { font-size: 0.9rem; color: #cbd5e1; line-height: 1.4; }
-    .term-val-intent { color: #fde047; font-weight: bold; }
-    .term-val-adapter { color: #34d399; font-weight: bold; }
-    .term-val-time { color: #fb7185; font-weight: bold; }
-
-    #chat-window { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; padding-right: 0.5rem; }
-    .message { max-width: 80%; padding: 0.85rem 1.25rem; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; }
-    .message.user { align-self: flex-end; background: var(--user-msg); color: #fff; border-bottom-right-radius: 2px; }
-    .message.ai { align-self: flex-start; background: var(--ai-msg); color: var(--text); border-bottom-left-radius: 2px; }
-    .input-container { display: flex; gap: 0.5rem; margin-top: 1rem; background: var(--card); padding: 0.5rem; border-radius: 12px; border: 1px solid #334155; }
-    input { flex: 1; background: transparent; border: none; color: #fff; padding: 0.75rem; font-size: 1rem; outline: none; }
-    button { background: var(--accent); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; }
-    button:hover { background: var(--accent-hover); }
-    button:disabled { background: #475569; cursor: not-allowed; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Domain QA LLM Engine | Dynamic Routing Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .progress-bar-fill { transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    </style>
 </head>
-<body>
-  <header>
-    <h1>Multi-Agent LoRA Router <span style="font-size: 0.8rem; color: var(--text-sub);">(Qwen2.5-0.5B Shared Stack)</span></h1>
-    <div id="status" class="badge">Checking Server...</div>
-  </header>
+<body class="min-h-screen p-6 flex flex-col items-center">
 
-  <main>
-    <div id="terminal-banner">
-      <div class="term-title">SYSTEM ROUTER TERMINAL // VRAM MULTI-TENANCY EXECUTION</div>
-      <div class="term-row">&gt; Detected Intent: <span id="intent-tag" class="term-val-intent">[AWAITING]</span></div>
-      <div class="term-row">&gt; Active Adapter: <span id="adapter-tag" class="term-val-adapter">[AWAITING]</span></div>
-      <div class="term-row">&gt; Memory Switch Latency: <span id="time-tag" class="term-val-time">0</span> ms</div>
-    </div>
+    <!-- Header Section -->
+    <header class="w-full max-w-6xl mb-8 text-center">
+        <h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400">
+            Multi-Domain QA LLM Engine
+        </h1>
+        <p class="text-slate-400 mt-2 text-sm md:text-base">
+            Qwen2.5-0.5B + SentenceTransformer CPU Routing + Runtime PEFT Adapter Fusion
+        </p>
+    </header>
 
-    <div id="chat-window">
-      <div class="message ai">Hello! I am a multi-agent assistant powered by 7 specialized LoRA adapters. Ask me about Medical, US Law, Agriculture, Fitness, SQL, Python, or C++!</div>
-    </div>
-    
-    <div class="input-container">
-      <input type="text" id="user-input" placeholder="Ask anything (e.g., How to treat hypertension? or Write a Python list comprehension)..." onkeydown="if(event.key==='Enter') sendMessage()" />
-      <button id="send-btn" onclick="sendMessage()">Send</button>
-    </div>
-  </main>
+    <main class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-  <script>
-    const API_URL = "http://127.0.0.1:8000";
+        <!-- Left Column: Input & Controls (5 cols) -->
+        <div class="lg:col-span-5 flex flex-col gap-6">
+            
+            <!-- Quick Demo Prompts -->
+            <div class="glass-card p-5 rounded-2xl">
+                <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Presentation Quick Presets</h2>
+                <div class="flex flex-col gap-2">
+                    <button onclick="setPrompt('What are the legal requirements for a binding contract under US law?')" 
+                            class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
+                        ⚖️ <span class="font-semibold text-slate-200">US Law:</span> Contract law requirements
+                    </button>
+                    <button onclick="setPrompt('How do I fix fungal leaf spot on tomato plants using organic farming?')" 
+                            class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
+                        🌱 <span class="font-semibold text-slate-200">Agriculture:</span> Tomato plant diseases
+                    </button>
+                    <button onclick="setPrompt('How to maintain proper bar path during heavy deadlifts?')" 
+                            class="text-left text-xs p-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition">
+                        🏋️ <span class="font-semibold text-slate-200">Fitness:</span> Deadlift execution form
+                    </button>
+                    <button onclick="setPrompt('Write a Python script using SQL to query an agricultural soil dataset')" 
+                            class="text-left text-xs p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-950/30 hover:bg-indigo-900/40 transition">
+                        🔀 <span class="font-semibold text-indigo-300">Hybrid Blend:</span> Python + SQL + Agriculture
+                    </button>
+                </div>
+            </div>
 
-    async function checkHealth() {
-      const statusBadge = document.getElementById("status");
-      try {
-        const res = await fetch(`${API_URL}/health`);
-        const data = await res.json();
-        if (data.status === "healthy") {
-          const count = data.active_adapters ? data.active_adapters.length : 0;
-          statusBadge.innerText = `Online (${data.device.toUpperCase()} | ${count} Adapters Ready)`;
-          statusBadge.style.background = "#065f46";
-          statusBadge.style.color = "#34d399";
+            <!-- Query Input Card -->
+            <div class="glass-card p-5 rounded-2xl flex-1 flex flex-col justify-between">
+                <div>
+                    <label for="promptInput" class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">User Input Prompt</label>
+                    <textarea id="promptInput" rows="5" placeholder="Type your query or select a preset above..."
+                        class="w-full bg-slate-900/90 text-slate-100 border border-slate-700 rounded-xl p-3 focus:outline-none focus:border-sky-500 transition resize-none text-sm"></textarea>
+                </div>
+
+                <button id="sendBtn" onclick="submitQuery()" 
+                    class="w-full mt-4 py-3 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20">
+                    <span id="btnText">Execute Router & Generate</span>
+                    <div id="spinner" class="hidden animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Column: Visualizer & Response (7 cols) -->
+        <div class="lg:col-span-7 flex flex-col gap-6">
+
+            <!-- Active Routing Card -->
+            <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Router Decision Engine</h2>
+                    <span id="routingBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                        Awaiting Input
+                    </span>
+                </div>
+
+                <!-- Active Adapter Allocation Bars -->
+                <div id="weightsContainer" class="space-y-3 mb-5">
+                    <p class="text-xs text-slate-500 italic">Adapter activation weights will render here dynamically.</p>
+                </div>
+
+                <!-- Domain Vector Similarities -->
+                <div class="border-t border-slate-800 pt-4">
+                    <h3 class="text-xs font-semibold text-slate-400 mb-2">Vector Similarity Breakdown (Cosine)</h3>
+                    <div id="scoresContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <!-- Scores rendered dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Response Display Box -->
+            <div class="glass-card p-5 rounded-2xl flex-1 flex flex-col">
+                <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Model Response Output</h2>
+                <div id="responseBox" class="w-full flex-1 min-h-[220px] bg-slate-900/90 rounded-xl p-4 border border-slate-800 text-sm leading-relaxed whitespace-pre-wrap text-slate-300">
+                    Response will appear here after generation...
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000/api/chat";
+
+        function setPrompt(text) {
+            document.getElementById('promptInput').value = text;
         }
-      } catch (e) {
-        statusBadge.innerText = "Offline";
-        statusBadge.style.background = "#7f1d1d";
-        statusBadge.style.color = "#f87171";
-      }
-    }
 
-    async function sendMessage() {
-      const input = document.getElementById("user-input");
-      const btn = document.getElementById("send-btn");
-      const chatWindow = document.getElementById("chat-window");
-      const terminalBanner = document.getElementById("terminal-banner");
-      const prompt = input.value.trim();
+        async function submitQuery() {
+            const prompt = document.getElementById('promptInput').value.trim();
+            if (!prompt) return;
 
-      if (!prompt) return;
+            const btnText = document.getElementById('btnText');
+            const spinner = document.getElementById('spinner');
+            const responseBox = document.getElementById('responseBox');
+            const badge = document.getElementById('routingBadge');
 
-      const userDiv = document.createElement("div");
-      userDiv.className = "message user";
-      userDiv.innerText = prompt;
-      chatWindow.appendChild(userDiv);
+            btnText.innerText = "Routing & Generating...";
+            spinner.classList.remove('hidden');
+            responseBox.innerText = "Processing vector embeddings and generating response...";
 
-      input.value = "";
-      input.disabled = true;
-      btn.disabled = true;
+            try {
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: prompt, max_tokens: 256 })
+                });
 
-      const aiDiv = document.createElement("div");
-      aiDiv.className = "message ai";
-      aiDiv.innerText = "Routing query and generating response...";
-      chatWindow.appendChild(aiDiv);
-      chatWindow.scrollTop = chatWindow.scrollHeight;
+                const data = await res.json();
 
-      try {
-        const res = await fetch(`${API_URL}/api/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: prompt })
-        });
-        
-        const data = await res.json();
+                if (data.status === "success") {
+                    // Update Badge
+                    badge.innerText = data.routing_mode;
+                    if (data.active_adapters.length > 1) {
+                        badge.className = "px-3 py-1 text-xs font-bold rounded-full bg-indigo-950 text-indigo-300 border border-indigo-500/40";
+                    } else {
+                        badge.className = "px-3 py-1 text-xs font-bold rounded-full bg-sky-950 text-sky-300 border border-sky-500/40";
+                    }
 
-        terminalBanner.style.display = "block";
-        document.getElementById("intent-tag").innerText = data.intent_detected;
-        document.getElementById("adapter-tag").innerText = data.adapter_used;
-        document.getElementById("time-tag").innerText = data.switch_time_ms;
+                    // Render Active Weights
+                    const weightsContainer = document.getElementById('weightsContainer');
+                    weightsContainer.innerHTML = '';
+                    
+                    for (const [domain, weight] of Object.entries(data.adapter_weights)) {
+                        const pct = Math.round(weight * 100);
+                        weightsContainer.innerHTML += `
+                            <div>
+                                <div class="flex justify-between text-xs mb-1">
+                                    <span class="font-bold text-slate-200">${domain.toUpperCase()}</span>
+                                    <span class="font-mono text-sky-400">${pct}% Weight</span>
+                                </div>
+                                <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                                    <div class="h-full bg-gradient-to-r from-sky-400 to-indigo-500 progress-bar-fill rounded-full" style="width: ${pct}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
 
-        aiDiv.innerText = data.response;
-      } catch (err) {
-        aiDiv.innerText = "Error: Could not connect to local FastAPI server.";
-      } finally {
-        input.disabled = false;
-        btn.disabled = false;
-        input.focus();
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-      }
-    }
+                    // Render All Domain Scores
+                    const scoresContainer = document.getElementById('scoresContainer');
+                    scoresContainer.innerHTML = '';
+                    for (const [domain, score] of Object.entries(data.domain_scores)) {
+                        const isActive = data.active_adapters.includes(domain);
+                        scoresContainer.innerHTML += `
+                            <div class="p-2 rounded-lg border ${isActive ? 'border-sky-500/40 bg-sky-950/20' : 'border-slate-800 bg-slate-900/40'} text-xs">
+                                <div class="text-slate-400 font-semibold">${domain}</div>
+                                <div class="font-mono ${isActive ? 'text-sky-300 font-bold' : 'text-slate-500'}">${score}</div>
+                            </div>
+                        `;
+                    }
 
-    checkHealth();
-  </script>
+                    // Render Response
+                    responseBox.innerText = data.response;
+                } else {
+                    responseBox.innerText = "Error: " + data.detail;
+                }
+            } catch (err) {
+                responseBox.innerText = "API Connection Error. Make sure api/app.py is running on http://127.0.0.1:8000";
+            } finally {
+                btnText.innerText = "Execute Router & Generate";
+                spinner.classList.add('hidden');
+            }
+        }
+    </script>
 </body>
 </html>
