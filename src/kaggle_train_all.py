@@ -1,5 +1,3 @@
-# File: src/kaggle_train_all.py
-
 import gc
 import os
 import shutil
@@ -123,13 +121,12 @@ def train_all():
         print(f"[+] STARTING TRAINING: {agent['name'].upper()}")
         print("="*60)
 
-        # Reload fresh base model per iteration to prevent adapter stacking
+        # Load fresh base model explicitly onto CUDA to prevent Accelerate partial wrapper
         base_model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.float16,
-            device_map="auto",
             trust_remote_code=True
-        )
+        ).to("cuda")
 
         output_dir = os.path.join(ADAPTERS_DIR, f"qwen-{agent['name']}-lora")
 
