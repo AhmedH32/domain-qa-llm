@@ -1,10 +1,12 @@
+# File: src/kaggle_train_all.py
+
 import gc
 import os
 import shutil
 
 import matplotlib.pyplot as plt
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, load_dataset_builder
 from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTConfig, SFTTrainer
@@ -49,7 +51,7 @@ def format_chatml(system_prompt, user_msg, assistant_msg):
 AGENTS = [
     {
         "name": "us_law",
-        "repo": "harpreet-singh/legal_advice",
+        "repo": "dzunggg/legal-qa-v1",
         "split": "train",
         "map_fn": lambda x: {"text": format_chatml("You are an expert in US Law.", x["question"], x["answer"])}
     },
@@ -57,13 +59,13 @@ AGENTS = [
         "name": "agriculture",
         "repo": "YuvrajSingh9886/Agriculture-Plan-Diseases-QA-Pairs-Dataset",
         "split": "train",
-        "map_fn": lambda x: {"text": format_chatml("You are an agricultural and botany expert.", x["Question"], x["Answer"])}
+        "map_fn": lambda x: {"text": format_chatml("You are an agricultural and botany expert.", x["QUESTION.question"], x["ANSWER"])}
     },
     {
         "name": "fitness",
         "repo": "hammamwahab/fitness-qa",
         "split": "train",
-        "map_fn": lambda x: {"text": format_chatml("You are a professional fitness coach specializing in heavy compound lifts and cardio routines.", x["Context"], x["Response"])}
+        "map_fn": lambda x: {"text": format_chatml("You are a professional fitness coach specializing in heavy compound lifts and cardio routines.", x["question"], x["answer"])}
     },
     {
         "name": "sql",
@@ -79,13 +81,33 @@ AGENTS = [
     },
     {
         "name": "cpp",
-        "repo": "lucasmccabe-lmi/CodeAlpaca-20k",
+        "repo": "sahil2801/CodeAlpaca-20k",
         "split": "train",
         "map_fn": lambda x: {"text": format_chatml("You are a C++ programmer. Provide standard library syntax, clear OOP code, and robust logic.", x["instruction"], x["output"])}
     }
 ]
 
+def verify_all_datasets():
+    """Validates Hugging Face Hub dataset availability prior to model loading."""
+    print("=" * 60)
+    print("[+] PRE-FLIGHT CHECK: VERIFYING HUGGINGFACE DATASETS")
+    print("=" * 60)
+    failed = []
+    for agent in AGENTS:
+        try:
+            load_dataset_builder(agent["repo"])
+            print(f"  ✓ [{agent['name'].upper()}] '{agent['repo']}' verified.")
+        except Exception as e:
+            print(f"  ✗ [{agent['name'].upper()}] '{agent['repo']}' FAILED: {e}")
+            failed.append(agent["name"])
+    
+    if failed:
+        raise RuntimeError(f"[-] Training pipeline aborted. Unavailable datasets: {failed}")
+    print("[+] All 6 datasets verified successfully! Proceeding to training.\n")
+
 def train_all():
+    verify_all_datasets()
+
     print(f"[+] Root directory set to: {ROOT_DIR}")
     print(f"[+] Adapters output directory: {ADAPTERS_DIR}")
     print(f"[+] Initializing Tokenizer: {MODEL_ID}")
@@ -101,6 +123,7 @@ def train_all():
         print(f"[+] STARTING TRAINING: {agent['name'].upper()}")
         print("="*60)
 
+        # Reload fresh base model per iteration to prevent adapter stacking
         base_model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.float16,
