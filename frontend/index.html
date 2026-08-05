@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Multi-Agent LoRA Assistant | Qwen2.5</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #0284c7;
+      --accent-hover: #0369a1;
+      --text: #f8fafc;
+      --text-sub: #94a3b8;
+      --user-msg: #0369a1;
+      --ai-msg: #334155;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; }
+    header { background: var(--card); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
+    header h1 { font-size: 1.25rem; font-weight: 600; color: #38bdf8; }
+    .badge { background: #065f46; color: #34d399; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.85rem; }
+    main { flex: 1; display: flex; flex-direction: column; max-width: 900px; width: 100%; margin: 0 auto; padding: 1rem; overflow: hidden; }
+    
+    #terminal-banner {
+      background: #020617;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-family: 'Courier New', Courier, monospace;
+      display: none;
+    }
+    .term-title { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .term-row { font-size: 0.9rem; color: #cbd5e1; line-height: 1.4; }
+    .term-val-intent { color: #fde047; font-weight: bold; }
+    .term-val-adapter { color: #34d399; font-weight: bold; }
+    .term-val-time { color: #fb7185; font-weight: bold; }
+
+    #chat-window { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; padding-right: 0.5rem; }
+    .message { max-width: 80%; padding: 0.85rem 1.25rem; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; }
+    .message.user { align-self: flex-end; background: var(--user-msg); color: #fff; border-bottom-right-radius: 2px; }
+    .message.ai { align-self: flex-start; background: var(--ai-msg); color: var(--text); border-bottom-left-radius: 2px; }
+    .input-container { display: flex; gap: 0.5rem; margin-top: 1rem; background: var(--card); padding: 0.5rem; border-radius: 12px; border: 1px solid #334155; }
+    input { flex: 1; background: transparent; border: none; color: #fff; padding: 0.75rem; font-size: 1rem; outline: none; }
+    button { background: var(--accent); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { background: #475569; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Multi-Agent LoRA Router <span style="font-size: 0.8rem; color: var(--text-sub);">(Qwen2.5-0.5B Shared Stack)</span></h1>
+    <div id="status" class="badge">Checking Server...</div>
+  </header>
+
+  <main>
+    <div id="terminal-banner">
+      <div class="term-title">SYSTEM ROUTER TERMINAL // VRAM MULTI-TENANCY EXECUTION</div>
+      <div class="term-row">&gt; Detected Intent: <span id="intent-tag" class="term-val-intent">[AWAITING]</span></div>
+      <div class="term-row">&gt; Active Adapter: <span id="adapter-tag" class="term-val-adapter">[AWAITING]</span></div>
+      <div class="term-row">&gt; Memory Switch Latency: <span id="time-tag" class="term-val-time">0</span> ms</div>
+    </div>
+
+    <div id="chat-window">
+      <div class="message ai">Hello! I am a multi-agent assistant powered by 7 specialized LoRA adapters. Ask me about Medical, US Law, Agriculture, Fitness, SQL, Python, or C++!</div>
+    </div>
+    
+    <div class="input-container">
+      <input type="text" id="user-input" placeholder="Ask anything (e.g., How to treat hypertension? or Write a Python list comprehension)..." onkeydown="if(event.key==='Enter') sendMessage()" />
+      <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+  </main>
+
+  <script>
+    const API_URL = "http://127.0.0.1:8000";
+
+    async function checkHealth() {
+      const statusBadge = document.getElementById("status");
+      try {
+        const res = await fetch(`${API_URL}/health`);
+        const data = await res.json();
+        if (data.status === "healthy") {
+          const count = data.active_adapters ? data.active_adapters.length : 0;
+          statusBadge.innerText = `Online (${data.device.toUpperCase()} | ${count} Adapters Ready)`;
+          statusBadge.style.background = "#065f46";
+          statusBadge.style.color = "#34d399";
+        }
+      } catch (e) {
+        statusBadge.innerText = "Offline";
+        statusBadge.style.background = "#7f1d1d";
+        statusBadge.style.color = "#f87171";
+      }
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById("user-input");
+      const btn = document.getElementById("send-btn");
+      const chatWindow = document.getElementById("chat-window");
+      const terminalBanner = document.getElementById("terminal-banner");
+      const prompt = input.value.trim();
+
+      if (!prompt) return;
+
+      const userDiv = document.createElement("div");
+      userDiv.className = "message user";
+      userDiv.innerText = prompt;
+      chatWindow.appendChild(userDiv);
+
+      input.value = "";
+      input.disabled = true;
+      btn.disabled = true;
+
+      const aiDiv = document.createElement("div");
+      aiDiv.className = "message ai";
+      aiDiv.innerText = "Routing query and generating response...";
+      chatWindow.appendChild(aiDiv);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+
+      try {
+        const res = await fetch(`${API_URL}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: prompt })
+        });
+        
+        const data = await res.json();
+
+        terminalBanner.style.display = "block";
+        document.getElementById("intent-tag").innerText = data.intent_detected;
+        document.getElementById("adapter-tag").innerText = data.adapter_used;
+        document.getElementById("time-tag").innerText = data.switch_time_ms;
+
+        aiDiv.innerText = data.response;
+      } catch (err) {
+        aiDiv.innerText = "Error: Could not connect to local FastAPI server.";
+      } finally {
+        input.disabled = false;
+        btn.disabled = false;
+        input.focus();
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+      }
+    }
+
+    checkHealth();
+  </script>
+</body>
+</html>

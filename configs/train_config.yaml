@@ -1,5 +1,5 @@
 model:
-  base_model_name: "Qwen/Qwen2.5-0.5B"  # Raw foundation model (no prior instruction alignment)
+  base_model_name: "Qwen/Qwen2.5-0.5B"
   max_seq_length: 512
 
 dataset:
@@ -24,3 +24,12 @@ training:
   logging_steps: 10
   fp16: true
   optim: "adamw_torch"
+
+adapters:
+  medical: "./adapters/qwen-medquad-lora"
+  us_law: "./adapters/qwen-us_law-lora"
+  agriculture: "./adapters/qwen-agriculture-lora"
+  fitness: "./adapters/qwen-fitness-lora"
+  sql: "./adapters/qwen-sql-lora"
+  python: "./adapters/qwen-python-lora"
+  cpp: "./adapters/qwen-cpp-lora"

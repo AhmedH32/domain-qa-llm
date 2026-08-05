@@ -5,3 +5,10 @@ __pycache__/
 outputs/
 adapters/
 .vscode/
+results/
+*.zip
+*.png
+__pycache__/
+.venv/
+venv/
+.DS_Store
